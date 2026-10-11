@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Generation Forecasting &amp; Variance Explanation Agent</title>
+<style>
+:root{--g:#12372a;--g2:#1f6f4a;--bg:#f4f7f6;--card:#fff;--line:#e3e8e6;--tx:#17212b;--mut:#5d6b66;--red:#c0392b;--amb:#d98a00;--blue:#2563eb}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:var(--tx);line-height:1.45}
+header{background:var(--g);color:#fff;padding:22px 32px}
+header h1{margin:0 0 4px;font-size:24px}header p{margin:0;opacity:.8;font-size:14px}
+main{max-width:1180px;margin:0 auto;padding:20px 20px 48px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:0 4px 14px rgba(20,40,30,.04)}
+.card h2{margin:0 0 4px;font-size:16px;color:var(--g)}.sub{color:var(--mut);font-size:13px;margin:0 0 12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.kpi b{display:block;font-size:26px;color:var(--g)}.kpi span{font-size:12px;color:var(--mut)}
+.kpi.warn b{color:var(--red)}
+.grid2{display:grid;grid-template-columns:3fr 2fr;gap:16px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+svg{width:100%;height:auto;display:block}
+.tabs button,.chip,.btn{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer;color:var(--tx)}
+.tabs button.on{background:var(--g);color:#fff;border-color:var(--g)}
+.btn{background:var(--g);color:#fff;border-color:var(--g);border-radius:8px;padding:9px 16px}
+.chip:hover,.tabs button:hover{border-color:var(--g2)}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--mut);margin-top:6px}
+.legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:5px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:right}th:first-child,td:first-child{text-align:left}
+th{color:var(--mut);font-weight:600;font-size:12px}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+.pill.major{background:#fde8e6;color:var(--red)}.pill.moderate{background:#fff3d6;color:#8a5a00}.pill.minor{background:#e8f3ec;color:var(--g2)}
+.pill.yes{background:#e6efff;color:var(--blue)}.pill.no{background:#eee;color:#666}
+.bar{display:flex;align-items:center;gap:8px;font-size:12px;margin:5px 0}.bar .n{width:120px;color:var(--mut)}.bar .t{flex:1;position:relative;height:14px;background:#f1f4f3;border-radius:4px}
+.bar .f{position:absolute;top:0;bottom:0;border-radius:3px}.bar .v{width:58px;text-align:right}
+.note{background:#f7faf8;border-left:4px solid var(--g2);padding:10px 12px;border-radius:6px;font-size:14px;margin:10px 0;white-space:pre-wrap}
+.caveat{font-size:12px;color:var(--mut);margin:4px 0}
+input[type=text],input[type=number]{border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px;width:100%}
+.row{display:flex;gap:8px;margin-bottom:8px}.chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}
+.trace{font-size:12px;color:var(--mut);margin-top:8px}.trace code{background:#eef2f1;padding:1px 5px;border-radius:4px}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;align-items:end}
+label{font-size:12px;color:var(--mut);display:block;margin-bottom:3px}
+.big{font-size:28px;font-weight:700;color:var(--g)}
+.err{color:var(--red);font-size:13px}
+</style>
+</head>
+<body>
+<header><h1>Power Generation Forecasting &amp; Variance Explanation Agent</h1>
+<p>Operational forecast vs actual, walk-forward baseline, and an agent that explains forecast misses.</p></header>
+<main>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <div><h2>Generation: actual vs forecasts</h2><p class="sub">Click a point or bar to explain that day. Model line = walk-forward (out-of-fold) predictions only, so it starts after 15 days of training.</p></div>
+      <div class="tabs" id="assetTabs"></div>
+    </div>
+    <div id="chart1"></div>
+    <div class="legend"><span><i style="background:#1f6f4a"></i>Actual</span><span><i style="background:#8a96a0;border-top:2px dashed #8a96a0;height:0"></i>Operational forecast</span><span><i style="background:#2563eb"></i>Our baseline (out-of-fold)</span><span style="color:var(--red)">▲ Outage flagged</span></div>
+    <h2 style="margin-top:16px">Forecast miss (actual − operational forecast)</h2>
+    <div id="chart2"></div>
+    <div class="legend"><span style="color:var(--red)">■ major</span><span style="color:var(--amb)">■ moderate</span><span style="color:var(--g2)">■ minor</span><span>severity = robust z-score of the miss vs non-outage days</span></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card" id="dayCard"><h2>Day explanation</h2><p class="sub">Select a day on the chart.</p></div>
+    <div class="card">
+      <h2>Ask the agent</h2>
+      <p class="sub">Try a date, “worst misses”, “outage days”, or “summary”.</p>
+      <div class="row"><input type="text" id="q" placeholder="Why was 2026-08-15 unit A so far off?"><button class="btn" id="ask">Ask</button></div>
+      <div class="chips" id="chips"></div>
+      <div id="agentOut"></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card"><h2>Which drivers explain the miss?</h2>
+      <p class="sub">Regression of the miss on each driver (MWh per unit), with 90% date-cluster bootstrap CI. “Significant” = CI excludes 0.</p>
+      <div id="drivers"></div></div>
+    <div class="card"><h2>What-if forecast</h2><p class="sub">Weather-only baseline; no operational forecast needed.</p>
+      <div class="form">
+        <div><label>Irradiance W/m²</label><input type="number" id="f_irr" value="700"></div>
+        <div><label>Wind m/s</label><input type="number" id="f_wind" value="8" step="0.1"></div>
+        <div><label>Temp °C</label><input type="number" id="f_temp" value="32" step="0.1"></div>
+        <div><label>Outage</label><select id="f_out" style="padding:9px;border-radius:8px;border:1px solid var(--line);width:100%"><option value="0">No</option><option value="1">Yes</option></select></div>
+      </div>
+      <div style="margin-top:12px"><button class="btn" id="fgo">Forecast</button></div>
+      <div id="fout" style="margin-top:12px"></div></div>
+  </div>
+
+  <div class="card"><h2>Evaluation (expanding-window walk-forward, date-blocked)</h2>
+    <p class="sub">Out-of-sample on the last 15 days (both units). Lower MAE/RMSE is better; bias &gt; 0 = under-forecast.</p>
+    <div id="evalTable"></div><div id="split" class="caveat"></div></div>
+
+  <div class="card"><h2>Limitations</h2>
+    <ul class="caveat" style="font-size:13px;margin:0;padding-left:18px">
+      <li>Only 30 dates × 2 units and 3 outage rows: estimates are noisy; intervals are indicative.</li>
+      <li>Units A/B are inferred from row order (no site id in the file). Weather is observed, not forecast, so weather-driven misses cannot be separated from forecast-input error.</li>
+      <li>Attribution is linear and associational, not causal. “Unexplained” means no available driver accounts for it.</li>
+    </ul></div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const SEV={major:'#c0392b',moderate:'#d98a00',minor:'#1f6f4a'};
+let S=null,SERIES=[],asset='A',selected=null;
+const j=async(u,o)=>{const r=await fetch(u,o);if(!r.ok)throw new Error((await r.text()).slice(0,200));return r.json()};
+
+function kpis(){
+  const w=S.walk_forward,op=w.operational_forecast,m=w[S.selected_model],c=w.ridge_forecast_corrected;
+  const out=S.drivers.find(d=>d.driver==='outage');
+  $('#kpis').innerHTML=[
+   [op.mae.toFixed(2),'Operational forecast MAE (MWh, last 15 days)'],
+   [m.mae.toFixed(2),`Weather-only baseline MAE (${S.selected_model})`],
+   [c.mae.toFixed(2),'Bias-corrected forecast MAE'],
+   [S.operational_forecast_full_sample.wape_pct.toFixed(1)+'%','Operational WAPE, all 60 rows'],
+   [out.coef_mwh_per_unit.toFixed(1)+' MWh','Extra shortfall on outage days (beyond forecast)','warn']
+  ].map(([v,l,c])=>`<div class="kpi ${c||''}"><b>${v}</b><span>${esc(l)}</span></div>`).join('');
+}
+
+function svgWrap(w,h,inner){return `<svg viewBox="0 0 ${w} ${h}" role="img">${inner}</svg>`}
+function chart1(){
+  const d=SERIES.filter(r=>r.asset===asset),W=900,H=300,m={l:46,r:14,t:12,b:30};
+  const ys=d.flatMap(r=>[r.actual,r.forecast,r.model]).filter(v=>v!=null),y0=0,y1=Math.ceil(Math.max(...ys)/10)*10;
+  const x=i=>m.l+i*(W-m.l-m.r)/(d.length-1),y=v=>H-m.b-(v-y0)/(y1-y0)*(H-m.t-m.b);
+  let s='';
+  for(let v=y0;v<=y1;v+=20)s+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y(v)}" y2="${y(v)}" stroke="#e8eeec"/><text x="${m.l-6}" y="${y(v)+4}" font-size="11" text-anchor="end" fill="#6a7873">${v}</text>`;
+  d.forEach((r,i)=>{if(i%3===0)s+=`<text x="${x(i)}" y="${H-10}" font-size="11" text-anchor="middle" fill="#6a7873">${r.date.slice(5)}</text>`});
+  const path=(k)=>{let p='',on=false;d.forEach((r,i)=>{if(r[k]==null){on=false;return}p+=(on?'L':'M')+x(i)+' '+y(r[k]);on=true});return p};
+  s+=`<path d="${path('forecast')}" fill="none" stroke="#8a96a0" stroke-width="2" stroke-dasharray="5 4"/>`;
+  s+=`<path d="${path('model')}" fill="none" stroke="#2563eb" stroke-width="2"/>`;
+  s+=`<path d="${path('actual')}" fill="none" stroke="#1f6f4a" stroke-width="2.5"/>`;
+  d.forEach((r,i)=>{
+    const sel=selected&&selected.date===r.date&&selected.asset===r.asset;
+    s+=`<circle cx="${x(i)}" cy="${y(r.actual)}" r="${sel?7:4}" fill="${sel?'#12372a':'#1f6f4a'}" style="cursor:pointer" data-d="${r.date}" data-a="${r.asset}"><title>${r.date}: actual ${r.actual}, forecast ${r.forecast}</title></circle>`;
+    if(r.outage)s+=`<path d="M${x(i)} ${y(r.actual)+10} l-6 10 h12z" fill="#c0392b"/>`;
+  });
+  $('#chart1').innerHTML=svgWrap(W,H,s);
+}
+function chart2(){
+  const d=SERIES.filter(r=>r.asset===asset),W=900,H=190,m={l:46,r:14,t:10,b:26};
+  const mx=Math.ceil(Math.max(...d.map(r=>Math.abs(r.err)))/5)*5,y=v=>m.t+(mx-v)/(2*mx)*(H-m.t-m.b),bw=(W-m.l-m.r)/d.length;
+  let s=`<line x1="${m.l}" x2="${W-m.r}" y1="${y(0)}" y2="${y(0)}" stroke="#9aa7a2"/>`;
+  [-mx,0,mx].forEach(v=>s+=`<text x="${m.l-6}" y="${y(v)+4}" font-size="11" text-anchor="end" fill="#6a7873">${v}</text>`);
+  d.forEach((r,i)=>{const x=m.l+i*bw+bw*.15,h=Math.abs(y(r.err)-y(0)),top=r.err>=0?y(r.err):y(0);
+    const sel=selected&&selected.date===r.date&&selected.asset===r.asset;
+    s+=`<rect x="${x}" y="${top}" width="${bw*.7}" height="${Math.max(h,1)}" fill="${SEV[r.severity]}" opacity="${sel?1:.78}" stroke="${sel?'#000':'none'}" style="cursor:pointer" data-d="${r.date}" data-a="${r.asset}"><title>${r.date}: ${r.err} MWh (${r.severity})</title></rect>`;
+    if(i%3===0)s+=`<text x="${x+bw*.35}" y="${H-8}" font-size="11" text-anchor="middle" fill="#6a7873">${r.date.slice(5)}</text>`});
+  $('#chart2').innerHTML=svgWrap(W,H,s);
+}
+function bindClicks(){document.querySelectorAll('[data-d]').forEach(e=>e.onclick=()=>pick(e.dataset.d,e.dataset.a))}
+function redraw(){chart1();chart2();bindClicks()}
+
+function contribBars(list){
+  const mx=Math.max(...list.map(c=>Math.abs(c.mwh)),1);
+  return list.map(c=>{const w=Math.abs(c.mwh)/mx*50,pos=c.mwh>=0,col=c.driver==='unexplained'?'#aab4b0':(pos?'#2563eb':'#c0392b');
+    return `<div class="bar"><span class="n">${esc(c.driver)}</span><div class="t"><div class="f" style="left:${pos?50:50-w}%;width:${w}%;background:${col}"></div><div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:#9aa7a2"></div></div><span class="v">${c.mwh>0?'+':''}${c.mwh.toFixed(2)}</span></div>`}).join('');
+}
+function dayHTML(e,compact){
+  return `<div ${compact?'style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px"':''}>
+   <b>${esc(e.date)} · unit ${esc(e.asset)}</b> <span class="pill ${esc(e.severity)}">${esc(e.severity)}</span> ${e.inputs.outage==='yes'?'<span class="pill yes">outage</span>':''}
+   <div class="caveat">actual ${e.actual_mwh.toFixed(1)} · forecast ${e.forecast_mwh.toFixed(1)} · miss ${e.miss_mwh>0?'+':''}${e.miss_mwh.toFixed(1)} MWh · confidence: ${esc(e.confidence)}</div>
+   <div class="note">${esc(e.headline)}</div>
+   ${compact?'':`<div class="caveat">Inputs: ${Object.entries(e.inputs).map(([k,v])=>esc(k)+' '+esc(v)).join(' · ')}</div>
+   <div style="margin:8px 0 4px;font-size:12px;font-weight:600;color:var(--mut)">Contribution to the miss (MWh)</div>${contribBars(e.contributions_mwh)}
+   ${e.caveats.map(c=>`<div class="caveat">⚠ ${esc(c)}</div>`).join('')}`}
+  </div>`;
+}
+async function pick(date,a){
+  selected={date,asset:a};asset=a;tabs();redraw();
+  $('#dayCard').innerHTML='<h2>Day explanation</h2><p class="sub">Loading…</p>';
+  try{const e=await j(`/api/variance?date=${date}&asset=${a}`);$('#dayCard').innerHTML='<h2>Day explanation</h2>'+dayHTML(e,false)}
+  catch(err){$('#dayCard').innerHTML=`<h2>Day explanation</h2><p class="err">${esc(err.message)}</p>`}
+}
+function tabs(){$('#assetTabs').innerHTML=S.data.assets.map(a=>`<button class="${a===asset?'on':''}" data-t="${a}">Unit ${a}</button>`).join('');
+  document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{asset=b.dataset.t;tabs();redraw()})}
+
+function driversTable(){
+  $('#drivers').innerHTML=`<table><tr><th>Driver</th><th>MWh / unit</th><th>90% CI</th><th>Significant</th><th>Share of explained</th></tr>`+
+  S.drivers.map(d=>`<tr><td>${esc(d.driver)} <span class="caveat">(${esc(d.unit)})</span></td><td>${d.coef_mwh_per_unit}</td><td>${d.ci90[0]} … ${d.ci90[1]}</td><td><span class="pill ${d.significant?'yes':'no'}">${d.significant?'yes':'no'}</span></td><td>${d.share_of_explained_pct}%</td></tr>`).join('')+
+  `</table><p class="caveat">R² of the miss model = ${S.driver_model_r2}: most of the miss is not explained by these four drivers. Noise floor ≈ ±${S.noise_floor_mwh} MWh.</p>`;
+}
+function evalTable(){
+  const names={operational_forecast:'Operational forecast (given)',naive_mean:'Naive: training mean',ridge_raw:'Ridge · raw weather+outage',ridge_engineered:'Ridge · engineered features',gbr_engineered:'Gradient boosting · engineered',ridge_forecast_corrected:'Ridge · bias-corrected forecast'};
+  const w=S.walk_forward;
+  $('#evalTable').innerHTML=`<table><tr><th>Model</th><th>MAE</th><th>RMSE</th><th>WAPE %</th><th>Bias</th><th>R²</th></tr>`+
+   Object.keys(names).map(k=>{const m=w[k];return `<tr ${k===S.selected_model?'style="background:#f0f7f3"':''}><td>${names[k]}${k===S.selected_model?' ★':''}</td><td>${m.mae}</td><td>${m.rmse}</td><td>${m.wape_pct}</td><td>${m.bias}</td><td>${m.r2}</td></tr>`}).join('')+`</table>`;
+  const o=S.walk_forward_split.outage_days;
+  $('#split').textContent=`★ = selected weather-only baseline (lowest CV MAE among models that do not need the operational forecast). Outage days in the out-of-fold window: ${o?o.operational_forecast.n:0} row(s), too few to rank models on.`;
+}
+
+const CHIPS=['Why was 2026-08-15 unit A so far off?','Show the worst 5 misses','List outage days','Explain Aug 21','Give me an overall summary'];
+function renderMarkdown(text){
+  // Escape HTML first, then enable only basic formatting.
+  return esc(text)
+    .replace(/^\*\*(Confidence|Main Caveat):\*\*/gm, "<strong>$1:</strong>")
+    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+    .replace(/^\* (.+)$/gm, "? $1")
+    .replace(/\n/g, "<br>");
+}
+
+async function ask(text){
+  $('#agentOut').innerHTML='<p class="sub">Thinking…</p>';
+  try{const r=await j('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text, use_llm:true})});
+    let h=`<div class="note">${renderMarkdown(r.answer)}</div><div class="caveat">${r.llm_used?'Narration: LLM (numbers verified against evidence)':'Narration: deterministic template (LLM unavailable or response failed verification)'}</div>`;
+    if(r.explanations.length>1)h+=r.explanations.map(e=>dayHTML(e,true)).join('');
+    h+=`<div class="trace"><b>Agent trace</b><br>${r.trace.map((t,i)=>`${i+1}. <code>${esc(t.tool)}</code> → ${esc(typeof t.result==='string'?t.result:JSON.stringify(t.result))}`).join('<br>')}</div>`;
+    $('#agentOut').innerHTML=h;
+    if(r.explanations.length===1){pick(r.explanations[0].date,r.explanations[0].asset)}
+  }catch(e){$('#agentOut').innerHTML=`<p class="err">${esc(e.message)}</p>`}
+}
+
+async function init(){
+  try{
+    [S,SERIES]=await Promise.all([j('/api/summary'),j('/api/series')]);
+    kpis();tabs();redraw();driversTable();evalTable();
+    $('#chips').innerHTML=CHIPS.map(c=>`<button class="chip">${esc(c)}</button>`).join('');
+    document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{$('#q').value=c.textContent;ask(c.textContent)});
+    $('#ask').onclick=()=>ask($('#q').value);$('#q').onkeydown=e=>{if(e.key==='Enter')ask($('#q').value)};
+    $('#fgo').onclick=async()=>{
+      try{const r=await j('/api/forecast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({irradiance_wm2:+$('#f_irr').value,wind_speed_ms:+$('#f_wind').value,temperature_c:+$('#f_temp').value,outage_flag:+$('#f_out').value})});
+        $('#fout').innerHTML=`<div class="big">${r.forecast_mwh} MWh</div><div class="caveat">80% interval ${r.interval_80[0]} – ${r.interval_80[1]} MWh · model: ${esc(r.model)}</div><div class="caveat">${esc(r.note)}</div>`}
+      catch(e){$('#fout').innerHTML=`<p class="err">${esc(e.message)}</p>`}};
+    const worst=SERIES.filter(r=>r.asset===asset).sort((a,b)=>Math.abs(b.err)-Math.abs(a.err))[0];pick(worst.date,worst.asset);
+  }catch(e){document.querySelector('main').innerHTML=`<div class="card err">Could not load data from the API: ${esc(e.message)}</div>`}
+}
+init();
+</script>
+</body>
+</html>
